@@ -1,3 +1,4 @@
+use std::cmp::Ordering::{Equal, Less, Greater};
 use std::cmp::{min, max};
 use std::fs::File;
 use std::io::prelude::*;
@@ -106,7 +107,7 @@ impl PruningRadixTrie {
     }
     
     pub fn find(&self, search_term: &str, top_k: usize) -> Vec<(String, u32)> {
-        let mut results = vec![];
+        let mut results = Vec::with_capacity(top_k);
         let mut matched_prefix = String::with_capacity(32);
         self.find_all_child_terms(&self.nodes[0], &search_term, &mut matched_prefix, top_k, &mut results);
         results
@@ -119,11 +120,10 @@ impl PruningRadixTrie {
                 Ok(pos) => pos,
                 Err(pos) => pos
             };
-            results.insert(position, (term.to_owned(), weight));
-            if results.len() > top_k {
-                results.remove(top_k);
+            if results.len() == top_k {
+                results.remove(top_k - 1);
             }
-
+            results.insert(position, (term.to_owned(), weight));
         }
     }
 
@@ -137,7 +137,7 @@ impl PruningRadixTrie {
 
                 if results.len() == top_k && child.weight <= results[top_k - 1].1 && child.child_max_weight <= results[top_k - 1].1 {
                     if prefix.len() > 0 {
-                        break
+                        break;
                     } else {
                         continue;
                     }
@@ -176,21 +176,20 @@ impl PruningRadixTrie {
     }
 
     fn get_insert_index(&self, node_id: NodeId, weight: u32, child_max_weight: u32) -> usize {
-        if let Some(curr_children) = &self.nodes[node_id.0].children {
-            for (index, (_, child_id)) in curr_children.iter().enumerate() {
-                let child_node = &self.nodes[child_id.0];
-                if child_max_weight > child_node.child_max_weight {
-                    return index;
-                }
-                if child_max_weight == child_node.child_max_weight {
-                    if weight > child_node.weight {
-                        return index;
-                    }
-                }
+        if let Some(children) = &self.nodes[node_id.0].children {
+            let result = children.binary_search_by(|(_, child_id)| 
+                match child_max_weight.cmp(&self.nodes[child_id.0].child_max_weight) {
+                    Equal => weight.cmp(&self.nodes[child_id.0].weight),
+                    Less => Less,
+                    Greater => Greater
+            });
+            match result {
+                Ok(index) => index,
+                Err(index) => index
             }
-            return curr_children.len();
+        } else {
+            0
         }
-        0
     }
 
     fn replace_node(
@@ -400,7 +399,7 @@ fn main() {
     load_terms(&mut trie);
     println!("{} terms, {} nodes", trie.term_count, trie.nodes.len());
 
-    for (term, weight) in trie.find("f", 10) {
+    for (term, weight) in trie.find("synth", 10) {
         println!("{:30}{:>7}", term, weight);
     }
 
