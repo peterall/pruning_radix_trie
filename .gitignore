@@ -2,3 +2,5 @@
 terms.txt
 .vscode
 *.svg
+*.profraw
+.DS_Store
