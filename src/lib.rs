@@ -117,12 +117,12 @@ pub mod pruning_radix_trie {
             }
         }
 
-        pub fn find(&self, search_term: &str, top_k: usize) -> Vec<(String, u32)> {
+        pub fn find(&self, prefix: &str, top_k: usize) -> Vec<(String, u32)> {
             let mut results = Vec::with_capacity(top_k);
             let mut matched_prefix = String::with_capacity(32);
             self.find_all_child_terms(
                 &self.nodes[0],
-                search_term,
+                prefix,
                 &mut matched_prefix,
                 top_k,
                 &mut results,
