@@ -1,17 +1,25 @@
 pub mod pruning_radix_trie {
     use std::cmp::Ordering::{Equal, Greater, Less};
     use std::cmp::{max, min};
+    use std::fmt::Debug;
+    use std::ops::Add;
 
     #[derive(Copy, Clone)]
     struct NodeId(usize);
-    struct Node {
+    struct Node<T>
+    where
+        T: Ord + Copy + Add<Output = T> + Debug,
+    {
         children: Option<Vec<(String, NodeId)>>,
-        weight: u32,
-        child_max_weight: u32,
+        weight: Option<T>,
+        child_max_weight: Option<T>,
     }
 
-    pub struct PruningRadixTrie {
-        nodes: Vec<Node>,
+    pub struct PruningRadixTrie<T>
+    where
+        T: Ord + Copy + Add<Output = T> + Debug,
+    {
+        nodes: Vec<Node<T>>,
         term_count: usize,
     }
 
@@ -29,19 +37,25 @@ pub mod pruning_radix_trie {
         CommonSubstring(NodeMatchContext<'a>),
     }
 
-    impl Default for PruningRadixTrie {
+    impl<T> Default for PruningRadixTrie<T>
+    where
+        T: Ord + Copy + Add<Output = T> + Debug,
+    {
         fn default() -> Self {
             PruningRadixTrie::new()
         }
     }
 
-    impl PruningRadixTrie {
+    impl<T> PruningRadixTrie<T>
+    where
+        T: Ord + Copy + Add<Output = T> + Debug,
+    {
         pub fn new() -> Self {
             PruningRadixTrie {
                 nodes: vec![Node {
                     children: None,
-                    weight: 0,
-                    child_max_weight: 0,
+                    weight: None,
+                    child_max_weight: None,
                 }],
                 term_count: 0,
             }
@@ -84,8 +98,8 @@ pub mod pruning_radix_trie {
         fn make_node(
             &mut self,
             children: Option<Vec<(String, NodeId)>>,
-            weight: u32,
-            child_max_weight: u32,
+            weight: Option<T>,
+            child_max_weight: Option<T>,
         ) -> NodeId {
             let node_id = NodeId(self.nodes.len());
             self.nodes.push(Node {
@@ -117,7 +131,7 @@ pub mod pruning_radix_trie {
             }
         }
 
-        pub fn find(&self, prefix: &str, top_k: usize) -> Vec<(String, u32)> {
+        pub fn find(&self, prefix: &str, top_k: usize) -> Vec<(String, T)> {
             let mut results = Vec::with_capacity(top_k);
             let mut matched_prefix = String::with_capacity(32);
             self.find_all_child_terms(
@@ -133,9 +147,9 @@ pub mod pruning_radix_trie {
         fn add_top_k_result(
             &self,
             term: &str,
-            weight: u32,
+            weight: T,
             top_k: usize,
-            results: &mut Vec<(String, u32)>,
+            results: &mut Vec<(String, T)>,
         ) {
             if results.len() < top_k || weight >= results[top_k - 1].1 {
                 let position = match results.binary_search_by(|r| weight.cmp(&r.1)) {
@@ -151,22 +165,24 @@ pub mod pruning_radix_trie {
 
         fn find_all_child_terms(
             &self,
-            node: &Node,
+            node: &Node<T>,
             prefix: &str,
             matched_prefix: &mut String,
             top_k: usize,
-            results: &mut Vec<(String, u32)>,
+            results: &mut Vec<(String, T)>,
         ) {
             if let Some(children) = &node.children {
-                if results.len() == top_k && node.child_max_weight <= results[top_k - 1].1 {
+                if results.len() == top_k
+                    && matches!(node.child_max_weight, Some(w) if w <= results[top_k - 1].1)
+                {
                     return;
                 }
                 for (term, child_id) in children {
                     let child = &self.nodes[child_id.0];
 
                     if results.len() == top_k
-                        && child.weight <= results[top_k - 1].1
-                        && child.child_max_weight <= results[top_k - 1].1
+                        && matches!(child.weight, Some(w) if w <= results[top_k - 1].1)
+                        && matches!(child.child_max_weight, Some(w) if w <= results[top_k - 1].1)
                     {
                         if prefix.is_empty() {
                             continue;
@@ -176,11 +192,11 @@ pub mod pruning_radix_trie {
                     }
 
                     if prefix.is_empty() || term.starts_with(prefix) {
-                        if child.weight > 0 || node.children.is_some() {
+                        if child.weight.is_some() || node.children.is_some() {
                             matched_prefix.push_str(term);
 
-                            if child.weight > 0 {
-                                self.add_top_k_result(matched_prefix, child.weight, top_k, results);
+                            if let Some(weight) = child.weight {
+                                self.add_top_k_result(matched_prefix, weight, top_k, results);
                             }
                             self.find_all_child_terms(child, "", matched_prefix, top_k, results);
                             matched_prefix.truncate(matched_prefix.len() - term.len());
@@ -204,12 +220,17 @@ pub mod pruning_radix_trie {
             }
         }
 
-        pub fn add(&mut self, term: &str, weight: u32) {
+        pub fn add(&mut self, term: &str, weight: T) {
             let weight = self.add_term(NodeId(0), term, weight);
-            self.nodes[0].child_max_weight = max(weight, self.nodes[0].child_max_weight);
+            self.nodes[0].child_max_weight = max(self.nodes[0].child_max_weight, Some(weight));
         }
 
-        fn get_insert_index(&self, node_id: NodeId, weight: u32, child_max_weight: u32) -> usize {
+        fn get_insert_index(
+            &self,
+            node_id: NodeId,
+            weight: Option<T>,
+            child_max_weight: Option<T>,
+        ) -> usize {
             if let Some(children) = &self.nodes[node_id.0].children {
                 let result = children.binary_search_by(|(_, child_id)| {
                     match child_max_weight.cmp(&self.nodes[child_id.0].child_max_weight) {
@@ -247,9 +268,10 @@ pub mod pruning_radix_trie {
             parent_id: NodeId,
             node_id: NodeId,
             node_index: usize,
-            new_child_max_weight: u32,
+            new_child_max_weight: T,
         ) {
             let node = &mut self.nodes[node_id.0];
+            let new_child_max_weight = Some(new_child_max_weight);
             if node.child_max_weight < new_child_max_weight {
                 node.child_max_weight = new_child_max_weight;
 
@@ -257,7 +279,7 @@ pub mod pruning_radix_trie {
                     let (_, prev_child_id) =
                         self.nodes[parent_id.0].children.as_mut().unwrap()[node_index - 1];
                     if node_index > 0
-                        && new_child_max_weight > self.nodes[prev_child_id.0].child_max_weight
+                        || new_child_max_weight > self.nodes[prev_child_id.0].child_max_weight
                     {
                         let (term, child_id) = self.nodes[parent_id.0]
                             .children
@@ -270,15 +292,19 @@ pub mod pruning_radix_trie {
             }
         }
 
-        fn add_term(&mut self, curr_id: NodeId, term: &str, weight: u32) -> u32 {
+        fn add_term(&mut self, curr_id: NodeId, term: &str, weight: T) -> T {
             match self.match_children(curr_id, term) {
                 NodeMatch::Equal(NodeMatchContext { node_id, .. }) => {
                     let node = &mut self.nodes[node_id.0];
-                    if node.weight == 0 {
+                    if let Some(node_weight) = node.weight {
+                        let new_weight = node_weight + weight;
+                        node.weight = Some(new_weight);
+                        new_weight
+                    } else {
                         self.term_count += 1;
+                        node.weight = Some(weight);
+                        weight
                     }
-                    node.weight += weight;
-                    node.weight
                 }
 
                 NodeMatch::IsShorter(NodeMatchContext {
@@ -288,11 +314,10 @@ pub mod pruning_radix_trie {
                     key,
                 }) => {
                     let node = &self.nodes[node_id.0];
-                    let child_max_weight = max(node.weight, node.child_max_weight);
                     let child_id = self.make_node(
                         Some(vec![(key[common..].to_owned(), node_id)]),
-                        weight,
-                        child_max_weight,
+                        Some(weight),
+                        max(node.weight, node.child_max_weight),
                     );
 
                     self.replace_node(curr_id, node_index, &term[0..common], child_id);
@@ -319,16 +344,15 @@ pub mod pruning_radix_trie {
                 }) => {
                     let node = &self.nodes[node_id.0];
                     let key = key[common..].to_owned();
-
-                    let child_max_weight = max(node.child_max_weight, max(weight, node.weight));
-
-                    let new_node_id = self.make_node(None, weight, 0);
+                    let child_max_weight =
+                        max(node.child_max_weight, max(node.weight, Some(weight)));
+                    let new_node_id = self.make_node(None, Some(weight), None);
                     let child_id = self.make_node(
                         Some(vec![
                             (key, node_id),
                             (term[common..].to_owned(), new_node_id),
                         ]),
-                        0,
+                        None,
                         child_max_weight,
                     );
 
@@ -338,7 +362,7 @@ pub mod pruning_radix_trie {
                 }
 
                 NodeMatch::NoMatch => {
-                    let node_id = self.make_node(None, weight, 0);
+                    let node_id = self.make_node(None, Some(weight), Default::default());
                     self.append_child(curr_id, term.to_owned(), node_id);
                     self.term_count += 1;
                     weight
@@ -351,7 +375,7 @@ pub mod pruning_radix_trie {
         fn dump_node(&self, node_id: NodeId, term: &str, len: usize) {
             let parent = &self.nodes[node_id.0];
             println!(
-                "{:->len$} ({}/{}) id: {}, {} children",
+                "{:->len$} ({:?}/{:?}) id: {}, {} children",
                 term,
                 parent.weight,
                 parent.child_max_weight,
@@ -391,7 +415,7 @@ pub mod pruning_radix_trie {
         }
 
         #[allow(dead_code)]
-        fn assert_child_max(&self, node_id: NodeId, child_max_weight: u32) {
+        fn assert_child_max(&self, node_id: NodeId, child_max_weight: Option<T>) {
             if let Some(children) = &self.nodes[node_id.0].children {
                 for (_, child_id) in children {
                     let child = &self.nodes[child_id.0];
@@ -406,7 +430,7 @@ pub mod pruning_radix_trie {
         #[allow(dead_code)]
         fn assert_invariants(&self) {
             self.assert_child_order(NodeId(0));
-            self.assert_child_max(NodeId(0), u32::MAX);
+            self.assert_child_max(NodeId(0), self.nodes[0].child_max_weight);
         }
     }
 
@@ -416,7 +440,7 @@ pub mod pruning_radix_trie {
 
         #[test]
         fn empty() {
-            let trie = PruningRadixTrie::default();
+            let trie: PruningRadixTrie<u32> = Default::default();
             assert!(trie.is_empty());
             let results = trie.find("hello", 10);
             assert!(results.is_empty());
@@ -553,7 +577,7 @@ pub mod pruning_radix_trie {
             use std::io::BufReader;
             use unidecode::unidecode;
 
-            fn load_terms(trie: &mut PruningRadixTrie) {
+            fn load_terms(trie: &mut PruningRadixTrie<u32>) {
                 let terms_file = File::open("terms.txt").expect("file not found!");
 
                 let buf_reader = BufReader::new(terms_file);
@@ -567,15 +591,15 @@ pub mod pruning_radix_trie {
                 }
             }
             let mut trie = PruningRadixTrie::new();
-
+            let top_k = 20;
             load_terms(&mut trie);
-            let results = trie.find("hello", 10);
+            let results = trie.find("wik", top_k);
 
             for (term, weight) in &results {
                 println!("{:30}{:>7}", term, weight);
             }
 
-            assert_eq!(results.len(), 10);
+            assert_eq!(results.len(), top_k);
             assert!(is_descending(&results));
         }
 
