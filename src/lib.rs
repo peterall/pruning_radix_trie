@@ -648,7 +648,6 @@ mod tests {
         use std::fs::File;
         use std::io::prelude::*;
         use std::io::BufReader;
-        use unidecode::unidecode;
 
         fn load_terms(trie: &mut PruningRadixTrie<(), u32>) {
             let terms_file = File::open("terms.txt").expect("file not found!");
@@ -658,7 +657,7 @@ mod tests {
             for line in buf_reader.lines().flatten() {
                 if let Some((term, freq)) = line.split_once('\t') {
                     if let Ok(freq) = freq.parse::<u32>() {
-                        trie.add(&unidecode(term), (), freq);
+                        trie.add(term, (), freq);
                     }
                 }
             }
