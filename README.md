@@ -2,14 +2,14 @@
 Rust implementation of [Pruning Radix Trie by Wolf Garbe](https://github.com/wolfgarbe/PruningRadixTrie) (see credits/PruningRadixTrieLicense.txt).
 
 ## Usage
-Add terms to the trie with:
+Add terms with payloads to the trie with:
 ```rust
-pub fn add(&mut self, term: &str, weight: u32);
+pub fn add(&mut self, term: &str, payload: T, weight: U);
 ```
 After which you can prefix match with:
 ```rust
 pub fn find(&self, prefix: &str, top_k: usize) 
-    -> Vec<(String, u32)>
+    -> Vec<(String, &T, &U)>
 ```
 Results are returned in descending order based on weight.
 
@@ -19,18 +19,18 @@ use pruning_radix_trie::PruningRadixTrie;
 
 fn main() {
     let mut trie = PruningRadixTrie::new();
-    trie.add("heyo", 5);
-    trie.add("hello", 10);
-    trie.add("hej", 20);
+    trie.add("heyo", vec![1, 2, 3], 5);
+    trie.add("hello", vec![4, 5, 6], 10);
+    trie.add("hej", vec![7, 8, 9], 20);
 
     let results = trie.find("he", 10);
 
-    for (term, weight) in &results {
-        println!("{:10}{:>2}", term, weight);
+    for (term, payload, weight) in results {
+        println!("{:10}{:?}{:>4}", term, payload, weight);
     }
-    // hej      20
-    // hello    10
-    // heyo      5
+    //hej       [7, 8, 9]  20
+    //hello     [4, 5, 6]  10
+    //heyo      [1, 2, 3]   5
 }
 ```
 ## Testing
