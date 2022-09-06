@@ -12,8 +12,8 @@ use pruning_radix_trie::PruningRadixTrie;
 
 let mut trie = PruningRadixTrie::new();
 trie.add("heyo", vec![1, 2, 3], 5);
-trie.add("hello", vec![4, 5, 6], 10);
-trie.add("hej", vec![7, 8, 9], 20);
+trie.add("hello", vec![3, 4, 5], 10);
+trie.add("hej", vec![5, 6, 7], 20);
 
 let results = trie.find("he", 10);
 
@@ -22,6 +22,13 @@ for (term, payload, weight) in results {
 }
 //hej       [7, 8, 9]  20
 //hello     [4, 5, 6]  10
+//heyo      [1, 2, 3]   5
+
+let results = trie.find_with_filter("he", 10, |p| p.contains(&3));
+for (term, payload, weight) in results {
+    println!("{:10}{:?}{:>4}", term, payload, weight);
+}
+//hello     [3, 4, 5]  10
 //heyo      [1, 2, 3]   5
 ```
  */
@@ -163,6 +170,18 @@ where
     }
 
     pub fn find<'a>(&'a self, prefix: &str, top_k: usize) -> Vec<(String, &'a T, &'a U)> {
+        self.find_with_filter(prefix, top_k, |_| true)
+    }
+
+    pub fn find_with_filter<'a, P>(
+        &'a self,
+        prefix: &str,
+        top_k: usize,
+        mut predicate: P,
+    ) -> Vec<(String, &'a T, &'a U)>
+    where
+        P: FnMut(&'a T) -> bool,
+    {
         let mut results = Vec::with_capacity(top_k);
         let mut matched_prefix = String::with_capacity(32);
         self.find_all_child_terms(
@@ -170,6 +189,7 @@ where
             prefix,
             &mut matched_prefix,
             top_k,
+            &mut predicate,
             &mut results,
         );
         results
@@ -195,14 +215,17 @@ where
         }
     }
 
-    fn find_all_child_terms<'a>(
+    fn find_all_child_terms<'a, P>(
         &'a self,
         node: &'a Node<T, U>,
         prefix: &str,
         matched_prefix: &mut String,
         top_k: usize,
+        predicate: &mut P,
         results: &mut Vec<(String, &'a T, &'a U)>,
-    ) {
+    ) where
+        P: FnMut(&'a T) -> bool,
+    {
         if let Some(children) = &node.children {
             if results.len() == top_k
                 && matches!(node.child_max_weight, Some(w) if w <= *results[top_k - 1].2)
@@ -227,8 +250,10 @@ where
                     if child.weight.is_some() || node.children.is_some() {
                         matched_prefix.push_str(term);
 
-                        if let Some(weight) = child.weight.as_ref() {
-                            if let Some(payload) = child.payload.as_ref() {
+                        if let (Some(weight), Some(payload)) =
+                            (child.weight.as_ref(), child.payload.as_ref())
+                        {
+                            if predicate(payload) {
                                 self.add_top_k_result(
                                     matched_prefix,
                                     payload,
@@ -238,7 +263,14 @@ where
                                 );
                             }
                         }
-                        self.find_all_child_terms(child, "", matched_prefix, top_k, results);
+                        self.find_all_child_terms(
+                            child,
+                            "",
+                            matched_prefix,
+                            top_k,
+                            predicate,
+                            results,
+                        );
                         matched_prefix.truncate(matched_prefix.len() - term.len());
                     }
 
@@ -252,6 +284,7 @@ where
                         &prefix[term.len()..],
                         matched_prefix,
                         top_k,
+                        predicate,
                         results,
                     );
                     matched_prefix.truncate(matched_prefix.len() - term.len());
@@ -588,6 +621,34 @@ mod tests {
     }
 
     #[test]
+    fn predicate() {
+        let mut trie = PruningRadixTrie::new();
+        trie.add("hello world", true, 10);
+        trie.add("hello you", false, 20);
+        trie.add("hello long", false, 50);
+
+        let results = trie.find_with_filter("hello", 3, |p| *p);
+
+        assert_eq!(&results, &vec![("hello world".to_owned(), &true, &10)]);
+    }
+
+    #[test]
+    fn predicate_mutate_state() {
+        let mut trie = PruningRadixTrie::new();
+        trie.add("hello world", true, 10);
+        trie.add("hello you", false, 20);
+        trie.add("hello long", false, 50);
+
+        let mut comparisons = 0;
+        let results = trie.find_with_filter("hello", 3, |p| {
+            comparisons += 1;
+            *p
+        });
+        assert_eq!(&results, &vec![("hello world".to_owned(), &true, &10)]);
+        assert!(comparisons > 0);
+    }
+
+    #[test]
     fn complex_1() {
         let mut trie = PruningRadixTrie::new();
         trie.add("hello", (), 12);
@@ -629,8 +690,8 @@ mod tests {
     fn example() {
         let mut trie = PruningRadixTrie::new();
         trie.add("heyo", vec![1, 2, 3], 5);
-        trie.add("hello", vec![4, 5, 6], 10);
-        trie.add("hej", vec![7, 8, 9], 20);
+        trie.add("hello", vec![3, 4, 5], 10);
+        trie.add("hej", vec![5, 6, 7], 20);
 
         let results = trie.find("he", 10);
 
@@ -639,6 +700,13 @@ mod tests {
         }
         //hej       [7, 8, 9]  20
         //hello     [4, 5, 6]  10
+        //heyo      [1, 2, 3]   5
+
+        let results = trie.find_with_filter("he", 10, |p| p.contains(&3));
+        for (term, payload, weight) in results {
+            println!("{:10}{:?}{:>4}", term, payload, weight);
+        }
+        //hello     [3, 4, 5]  10
         //heyo      [1, 2, 3]   5
     }
 
