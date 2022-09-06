@@ -1,5 +1,5 @@
 # Pruning Radix Trie
-Rust implementation of [Pruning Radix Trie by Wolf Garbe](https://github.com/wolfgarbe/PruningRadixTrie) (see credits/PruningRadixTrieLicense.txt).
+Rust implementation of [Pruning Radix Trie, originally by Wolf Garbe](https://github.com/wolfgarbe/PruningRadixTrie) (see credits/PruningRadixTrieLicense.txt).
 
 ## Usage
 Add terms with payloads to the trie with:

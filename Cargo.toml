@@ -7,6 +7,6 @@ repository = "https://github.com/peterall/pruning_radix_trie.git"
 homepage = "https://github.com/peterall/pruning_radix_trie.git"
 license = "MIT"
 readme = "README.md"
-description = "Rust implementation of Pruning Radix Trie by Wolf Garbe"
+description = "Rust implementation of Pruning Radix Trie, originally by Wolf Garbe"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

@@ -1,5 +1,5 @@
 /*!
-Rust implementation of [PruningRadixTrie by Wolf Garbe](https://github.com/wolfgarbe/PruningRadixTrie).
+Rust implementation of [Pruning Radix Trie, orignially by Wolf Garbe](https://github.com/wolfgarbe/PruningRadixTrie).
 
 A Radix Trie or Patricia Trie is a space-optimized trie (prefix tree).
 A Pruning Radix trie is a novel Radix trie algorithm, that allows pruning of the Radix trie and early termination of the lookup.
