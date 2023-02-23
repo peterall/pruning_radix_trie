@@ -25,7 +25,7 @@ fn main() {
 
     let results = trie.find("he", 10);
 
-    for (term, payload, weight) in results {
+    for Result { term, payload, weight } in results {
         println!("{:10}{:?}{:>4}", term, payload, weight);
     }
     //hej       [7, 8, 9]  20
