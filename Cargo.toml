@@ -1,6 +1,6 @@
 [package]
 name = "pruning_radix_trie"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 authors = ["Peter Allwin <peter@allwin.se>"]
 repository = "https://github.com/peterall/pruning_radix_trie.git"
@@ -9,4 +9,11 @@ license = "MIT"
 readme = "README.md"
 description = "Rust implementation of Pruning Radix Trie, originally by Wolf Garbe"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+compact_str = "0.7.0"
+criterion = "0.4.0"
+lazy_static = "1.4.0"
+
+[[bench]]
+name = "bench"
+harness = false

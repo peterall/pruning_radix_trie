@@ -8,7 +8,7 @@ The trie can only be appended to, terms cannot be removed nor payloads altered.
 
 # Usage
 ```rust
-use pruning_radix_trie::PruningRadixTrie;
+use pruning_radix_trie::{PruningRadixTrie, Result};
 
 let mut trie = PruningRadixTrie::new();
 trie.add("heyo", vec![1, 2, 3], 5);
@@ -16,8 +16,7 @@ trie.add("hello", vec![3, 4, 5], 10);
 trie.add("hej", vec![5, 6, 7], 20);
 
 let results = trie.find("he", 10);
-
-for (term, payload, weight) in results {
+for Result { term, payload, weight } in results {
     println!("{:10}{:?}{:>4}", term, payload, weight);
 }
 //hej       [7, 8, 9]  20
@@ -25,26 +24,30 @@ for (term, payload, weight) in results {
 //heyo      [1, 2, 3]   5
 
 let results = trie.find_with_filter("he", 10, |p| p.contains(&3));
-for (term, payload, weight) in results {
+for Result { term, payload, weight } in results {
     println!("{:10}{:?}{:>4}", term, payload, weight);
 }
 //hello     [3, 4, 5]  10
 //heyo      [1, 2, 3]   5
 ```
- */
+*/
 
 use std::cmp::Ordering::{Equal, Greater, Less};
 use std::cmp::{max, min};
+use std::collections::BinaryHeap;
 use std::fmt::Debug;
 use std::ops::Add;
 
+use compact_str::CompactString;
+
 #[derive(Copy, Clone)]
 struct NodeId(usize);
+type NodeKey = CompactString;
 struct Node<T, U>
 where
     U: Ord + Copy + Add<Output = U> + Debug,
 {
-    children: Option<Vec<(String, NodeId)>>,
+    children: Option<Vec<(NodeKey, NodeId)>>,
     payload: Option<T>,
     weight: Option<U>,
     child_max_weight: Option<U>,
@@ -58,12 +61,36 @@ where
     term_count: usize,
 }
 
+#[derive(Debug)]
+pub struct Result<'a, T, U>
+where
+    U: Ord + Copy + Add<Output = U> + Debug,
+{
+    pub term: NodeKey,
+    pub payload: &'a T,
+    pub weight: &'a U,
+}
+
+impl<'a, T, U> Result<'a, T, U>
+where
+    U: Ord + Copy + Add<Output = U> + Debug,
+{
+    pub fn new(term: NodeKey, payload: &'a T, weight: &'a U) -> Self {
+        Self {
+            term,
+            payload,
+            weight,
+        }
+    }
+}
+
 struct NodeMatchContext<'a> {
     node_id: NodeId,
     node_index: usize,
     common: usize,
     key: &'a str,
 }
+
 enum NodeMatch<'a> {
     NoMatch,
     Equal(NodeMatchContext<'a>),
@@ -71,6 +98,34 @@ enum NodeMatch<'a> {
     IsLonger(NodeMatchContext<'a>),
     CommonSubstring(NodeMatchContext<'a>),
 }
+
+impl<'a, T, U> Ord for Result<'a, T, U>
+where
+    U: Ord + Copy + Add<Output = U> + Debug,
+{
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.weight.cmp(self.weight)
+    }
+}
+impl<'a, T, U> PartialOrd for Result<'a, T, U>
+where
+    U: Ord + Copy + Add<Output = U> + Debug,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        other.weight.partial_cmp(self.weight)
+    }
+}
+
+impl<'a, T, U> PartialEq for Result<'a, T, U>
+where
+    U: Ord + Copy + Add<Output = U> + Debug,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.weight == other.weight
+    }
+}
+
+impl<'a, T, U> Eq for Result<'a, T, U> where U: Ord + Copy + Add<Output = U> + Debug {}
 
 impl<T, U> Default for PruningRadixTrie<T, U>
 where
@@ -133,7 +188,7 @@ where
 
     fn make_node(
         &mut self,
-        children: Option<Vec<(String, NodeId)>>,
+        children: Option<Vec<(NodeKey, NodeId)>>,
         payload: Option<T>,
         weight: Option<U>,
         child_max_weight: Option<U>,
@@ -156,34 +211,31 @@ where
         self.term_count == 0
     }
 
-    fn append_child(&mut self, parent_id: NodeId, term: String, child_id: NodeId) {
+    fn append_child<S: Into<NodeKey>>(&mut self, parent_id: NodeId, term: S, child_id: NodeId) {
         let child_node = &self.nodes[child_id.0];
         let insert_index =
             self.get_insert_index(parent_id, child_node.weight, child_node.child_max_weight);
 
         let parent_node = &mut self.nodes[parent_id.0];
         if let Some(children) = &mut parent_node.children {
-            children.insert(insert_index, (term, child_id));
+            children.insert(insert_index, (term.into(), child_id));
         } else {
-            parent_node.children = Some(vec![(term, child_id)]);
+            parent_node.children = Some(vec![(term.into(), child_id)]);
         }
     }
 
-    pub fn find<'a>(&'a self, prefix: &str, top_k: usize) -> Vec<(String, &'a T, &'a U)> {
+    pub fn find<'a>(&'a self, prefix: &str, top_k: usize) -> Vec<Result<'a, T, U>> {
         self.find_with_filter(prefix, top_k, |_| true)
     }
 
-    pub fn find_with_filter<'a, P>(
+    pub fn find_with_filter<'a>(
         &'a self,
         prefix: &str,
         top_k: usize,
-        mut predicate: P,
-    ) -> Vec<(String, &'a T, &'a U)>
-    where
-        P: FnMut(&'a T) -> bool,
-    {
-        let mut results = Vec::with_capacity(top_k);
-        let mut matched_prefix = String::with_capacity(32);
+        mut predicate: impl FnMut(&'a T) -> bool,
+    ) -> Vec<Result<'a, T, U>> {
+        let mut results: BinaryHeap<Result<'a, T, U>> = BinaryHeap::new();
+        let mut matched_prefix = NodeKey::default();
         self.find_all_child_terms(
             &self.nodes[0],
             prefix,
@@ -192,43 +244,22 @@ where
             &mut predicate,
             &mut results,
         );
-        results
-    }
-
-    fn add_top_k_result<'a>(
-        &self,
-        term: &str,
-        payload: &'a T,
-        weight: &'a U,
-        top_k: usize,
-        results: &mut Vec<(String, &'a T, &'a U)>,
-    ) {
-        if results.len() < top_k || *weight >= *results[top_k - 1].2 {
-            let position = match results.binary_search_by(|r| weight.cmp(r.2)) {
-                Ok(pos) => pos,
-                Err(pos) => pos,
-            };
-            if results.len() == top_k {
-                results.remove(top_k - 1);
-            }
-            results.insert(position, (term.to_owned(), payload, weight));
-        }
+        results.into_sorted_vec()
     }
 
     fn find_all_child_terms<'a, P>(
         &'a self,
         node: &'a Node<T, U>,
         prefix: &str,
-        matched_prefix: &mut String,
+        matched_prefix: &mut NodeKey,
         top_k: usize,
         predicate: &mut P,
-        results: &mut Vec<(String, &'a T, &'a U)>,
+        results: &mut BinaryHeap<Result<'a, T, U>>,
     ) where
         P: FnMut(&'a T) -> bool,
     {
         if let Some(children) = &node.children {
-            if results.len() == top_k
-                && matches!(node.child_max_weight, Some(w) if w <= *results[top_k - 1].2)
+            if results.len() == top_k && node.child_max_weight <= results.peek().map(|r| *r.weight)
             {
                 return;
             }
@@ -236,8 +267,8 @@ where
                 let child = &self.nodes[child_id.0];
 
                 if results.len() == top_k
-                    && matches!(child.weight, Some(w) if w <= *results[top_k - 1].2)
-                    && matches!(child.child_max_weight, Some(w) if w <= *results[top_k - 1].2)
+                    && child.weight <= results.peek().map(|r| *r.weight)
+                    && child.child_max_weight <= results.peek().map(|r| *r.weight)
                 {
                     if prefix.is_empty() {
                         continue;
@@ -254,13 +285,14 @@ where
                             (child.weight.as_ref(), child.payload.as_ref())
                         {
                             if predicate(payload) {
-                                self.add_top_k_result(
-                                    matched_prefix,
+                                results.push(Result {
+                                    term: matched_prefix.as_str().into(),
                                     payload,
                                     weight,
-                                    top_k,
-                                    results,
-                                );
+                                });
+                                if results.len() > top_k {
+                                    results.pop();
+                                }
                             }
                         }
                         self.find_all_child_terms(
@@ -277,7 +309,7 @@ where
                     if !prefix.is_empty() {
                         break;
                     }
-                } else if prefix.starts_with(term) {
+                } else if prefix.starts_with(term.as_str()) {
                     matched_prefix.push_str(term);
                     self.find_all_child_terms(
                         child,
@@ -383,7 +415,7 @@ where
             }) => {
                 let node = &self.nodes[node_id.0];
                 let child_id = self.make_node(
-                    Some(vec![(key[common..].to_owned(), node_id)]),
+                    Some(vec![(key[common..].into(), node_id)]),
                     Some(payload),
                     Some(weight),
                     max(node.weight, node.child_max_weight),
@@ -412,14 +444,11 @@ where
                 key,
             }) => {
                 let node = &self.nodes[node_id.0];
-                let key = key[common..].to_owned();
+                let key = key[common..].into();
                 let child_max_weight = max(node.child_max_weight, max(node.weight, Some(weight)));
                 let new_node_id = self.make_node(None, Some(payload), Some(weight), None);
                 let child_id = self.make_node(
-                    Some(vec![
-                        (key, node_id),
-                        (term[common..].to_owned(), new_node_id),
-                    ]),
+                    Some(vec![(key, node_id), (term[common..].into(), new_node_id)]),
                     None,
                     None,
                     child_max_weight,
@@ -531,7 +560,7 @@ mod tests {
 
         let results = trie.find("h", 1);
         assert!(!results.is_empty());
-        assert_eq!(results[0], ("hello".to_owned(), &(), &10_u32));
+        assert_eq!(results[0], Result::new("hello".into(), &(), &10_u32));
     }
 
     // (true, true) => NodeMatch::Equal(context),
@@ -552,7 +581,7 @@ mod tests {
 
         let results = trie.find("h", 1);
         assert!(!results.is_empty());
-        assert_eq!(results[0], ("hello".to_owned(), &(), &20_u32));
+        assert_eq!(results[0], Result::new("hello".into(), &(), &20_u32));
     }
 
     #[test]
@@ -571,9 +600,9 @@ mod tests {
         assert_eq!(
             &results,
             &vec![
-                ("he".to_owned(), &(), &20_u32),
-                ("hello".to_owned(), &(), &10_u32),
-                ("heyo".to_owned(), &(), &5_u32)
+                Result::new("he".into(), &(), &20_u32),
+                Result::new("hello".into(), &(), &10_u32),
+                Result::new("heyo".into(), &(), &5_u32)
             ]
         );
     }
@@ -589,8 +618,8 @@ mod tests {
         assert_eq!(
             &results,
             &vec![
-                ("hello 😊".to_owned(), &(), &20_u32),
-                ("hello 🙂".to_owned(), &(), &10_u32),
+                Result::new("hello 😊".into(), &(), &20_u32),
+                Result::new("hello 🙂".into(), &(), &10_u32),
             ]
         );
     }
@@ -629,7 +658,10 @@ mod tests {
 
         let results = trie.find_with_filter("hello", 3, |p| *p);
 
-        assert_eq!(&results, &vec![("hello world".to_owned(), &true, &10)]);
+        assert_eq!(
+            &results,
+            &vec![Result::new("hello world".into(), &true, &10)]
+        );
     }
 
     #[test]
@@ -644,7 +676,10 @@ mod tests {
             comparisons += 1;
             *p
         });
-        assert_eq!(&results, &vec![("hello world".to_owned(), &true, &10)]);
+        assert_eq!(
+            &results,
+            &vec![Result::new("hello world".into(), &true, &10)]
+        );
         assert!(comparisons > 0);
     }
 
@@ -668,11 +703,11 @@ mod tests {
         assert_eq!(
             &results,
             &vec![
-                ("hella".to_owned(), &(), &30_u32),
-                ("helli".to_owned(), &(), &21_u32),
-                ("hellowood".to_owned(), &(), &20_u32),
-                ("he".to_owned(), &(), &15_u32),
-                ("hello".to_owned(), &(), &12_u32)
+                Result::new("hella".into(), &(), &30_u32),
+                Result::new("helli".into(), &(), &21_u32),
+                Result::new("hellowood".into(), &(), &20_u32),
+                Result::new("he".into(), &(), &15_u32),
+                Result::new("hello".into(), &(), &12_u32)
             ]
         );
 
@@ -680,8 +715,8 @@ mod tests {
         assert_eq!(
             &results,
             &vec![
-                ("hellowood".to_owned(), &(), &20_u32),
-                ("helloworld".to_owned(), &(), &5_u32),
+                Result::new("hellowood".into(), &(), &20_u32),
+                Result::new("helloworld".into(), &(), &5_u32),
             ]
         );
     }
@@ -695,7 +730,12 @@ mod tests {
 
         let results = trie.find("he", 10);
 
-        for (term, payload, weight) in results {
+        for Result {
+            term,
+            payload,
+            weight,
+        } in results
+        {
             println!("{:10}{:?}{:>4}", term, payload, weight);
         }
         //hej       [7, 8, 9]  20
@@ -703,7 +743,12 @@ mod tests {
         //heyo      [1, 2, 3]   5
 
         let results = trie.find_with_filter("he", 10, |p| p.contains(&3));
-        for (term, payload, weight) in results {
+        for Result {
+            term,
+            payload,
+            weight,
+        } in results
+        {
             println!("{:10}{:?}{:>4}", term, payload, weight);
         }
         //hello     [3, 4, 5]  10
@@ -735,7 +780,7 @@ mod tests {
         load_terms(&mut trie);
         let results = trie.find("wik", top_k);
 
-        for (term, _, weight) in &results {
+        for Result { term, weight, .. } in &results {
             println!("{:30}{:>7}", term, weight);
         }
 
@@ -743,10 +788,10 @@ mod tests {
         assert!(is_descending(&results));
     }
 
-    fn is_descending<T, U>(results: &[(String, &T, &U)]) -> bool
+    fn is_descending<T, U>(results: &[Result<T, U>]) -> bool
     where
-        U: Ord,
+        U: Ord + Copy + Add<Output = U> + Debug,
     {
-        results.windows(2).all(|w| *w[1].2 <= *w[0].2)
+        results.windows(2).all(|w| *w[1].weight <= *w[0].weight)
     }
 }
