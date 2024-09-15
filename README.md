@@ -9,7 +9,7 @@ pub fn add(&mut self, term: &str, payload: T, weight: U);
 After which you can prefix match with:
 ```rust
 pub fn find(&self, prefix: &str, top_k: usize) 
-    -> Vec<(String, &T, &U)>
+    -> Vec<Result<T,U>>
 ```
 Results are returned in descending order based on weight.
 

@@ -112,7 +112,7 @@ where
     U: Ord + Copy + Add<Output = U> + Debug,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        other.weight.partial_cmp(self.weight)
+        Some(self.cmp(other))
     }
 }
 
@@ -767,7 +767,7 @@ mod tests {
 
             let buf_reader = BufReader::new(terms_file);
 
-            for line in buf_reader.lines().flatten() {
+            for line in buf_reader.lines().map_while(std::io::Result::ok) {
                 if let Some((term, freq)) = line.split_once('\t') {
                     if let Ok(freq) = freq.parse::<u32>() {
                         trie.add(term, (), freq);

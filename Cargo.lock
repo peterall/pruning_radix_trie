@@ -374,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "pruning_radix_trie"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "compact_str",
  "criterion",
